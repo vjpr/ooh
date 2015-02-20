@@ -16,19 +16,31 @@ monitor = require 'usb-detection'
 telnet = require 'telnet-client'
 require 'iced-coffee-script'
 debug = require('debug') 'main'
+getopt = require 'node-getopt'
+parseArgs = require 'minimist'
 
 # TODO: CLI
+
+opts = getopt.create
+  dir: ['d', 'Project dir']
+  name: ['n', 'Executable name']
+  gccTools: ['g', 'GCC tools dir']
+.parseSystem()
+
+console.log opts
 
 # Store process object for openocd instance.
 proc = null
 
 pubsub = new EventEmitter
 
-projDir = '/Users/Vaughan/dev-tracktics/tracktics-tracker-cube'
+projDir = opts.dir or '/Users/Vaughan/dev-tracktics/tracktics-tracker-cube'
+projName = opts.name or 'tracktics-tracker-cube'
 
 searchPaths = "-s #{projDir}"
 configFiles = "-f openocd/st_nucleo_f4.cfg"
 cmd = "openocd #{searchPaths} #{configFiles}"
+gccTools = "~/dev-embedded/gcc-arm-none-eabi-4_8-2014q1/bin" or opts.gccTools
 
 debug cmd
 
@@ -41,7 +53,7 @@ run = ->
   debug 'Connecting...'.bold
   proc = exec cmd, {async: true}, (code, output) ->
 
-    # Ppenocd shutdown.
+    # Openocd shutdown.
 
     if output.match 'Error: open failed'
       # Device is probably disconnected. 
@@ -74,10 +86,10 @@ run()
 
 # TODO: Automatically flash when binary output file changes.
 
-debugDir = '/Users/Vaughan/dev-tracktics/tracktics-tracker-cube/Debug'
-elf = "#{debugDir}/tracktics-tracker-cube.elf"
-out = "#{debugDir}/tracktics-tracker-cube.bin"
-objcopy = "~/dev-embedded/gcc-arm-none-eabi-4_8-2014q1/bin/arm-none-eabi-objcopy"
+debugDir = "#{projDir}/Debug"
+elf = "#{debugDir}/#{projName}.elf"
+out = "#{debugDir}/#{projName}.bin"
+objcopy = "#{gccTools}/arm-none-eabi-objcopy"
 objcopyCmd = "#{objcopy} -O ihex #{elf} #{out}"
 
 #flash write_image erase #{elf} 0x08000000
@@ -94,7 +106,7 @@ cmdsString = """
 
 flashOnChange = ->
 
-  output = join(projDir, 'Debug/tracktics-tracker-cube.elf')
+  output = join(projDir, "Debug/#{projName}.elf")
 
   flash = ->
     debug 'Flashing...'.bold
