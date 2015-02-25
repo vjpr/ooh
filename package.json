@@ -23,6 +23,7 @@
     "nanotimer": "~0.3.10",
     "getopt": "~0.1.0",
     "node-getopt": "~0.2.3",
-    "minimist": "~1.1.0"
+    "minimist": "~1.1.0",
+    "growl": "~1.8.1"
   }
 }

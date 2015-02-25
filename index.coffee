@@ -1,5 +1,9 @@
 #
-# DEBUG=* nodemon -x iced index.coffee
+# Run during development:
+#   DEBUG=* nodemon -x iced index.coffee
+#
+# Otherwise:
+#   DEBUG=* iced index.coffee
 #
 
 require 'shelljs/global'
@@ -16,8 +20,13 @@ monitor = require 'usb-detection'
 telnet = require 'telnet-client'
 require 'iced-coffee-script'
 debug = require('debug') 'main'
+telnetDebug = require('debug') 'telnet'
 getopt = require 'node-getopt'
 parseArgs = require 'minimist'
+{spawn} = require('child_process')
+util = require 'util'
+growl = require 'growl'
+{log} = console
 
 # TODO: CLI
 
@@ -27,7 +36,7 @@ opts = getopt.create
   gccTools: ['g', 'GCC tools dir']
 .parseSystem()
 
-console.log opts
+#console.log opts
 
 # Store process object for openocd instance.
 proc = null
@@ -42,27 +51,62 @@ configFiles = "-f openocd/st_nucleo_f4.cfg"
 cmd = "openocd #{searchPaths} #{configFiles}"
 gccTools = "~/dev-embedded/gcc-arm-none-eabi-4_8-2014q1/bin" or opts.gccTools
 
-debug cmd
-
 monitor.on 'add', (device) ->
   if device.deviceName is 'STM32 STLink'
     pubsub.emit 'stLinkConnected'
 
 # Run and try to reconnect every second if there is a failure.
 run = ->
-  debug 'Connecting...'.bold
-  proc = exec cmd, {async: true}, (code, output) ->
+  console.log 'Running:'.bold, cmd
 
-    # Openocd shutdown.
+  [cmdName, cmdArgs...] = cmd.split ' '
+  proc = spawn cmdName, cmdArgs, stdio: 'pipe'
 
-    if output.match 'Error: open failed'
+  allOutput = ''
+
+  onError = (error) ->
+    log error
+    growl error, title: 'OpenOCD Helper'
+
+  handleOutput = (output) ->
+
+    util.print output.yellow
+    allOutput += output
+    
+    if output.match 'undefined debug reason 7 - target needs reset'
+      
+      onError "-> undefined debug reason 7 - target needs reset
+        WHAT THE FUCK. Need to start debug session again.".red
+      
+      # TODO: Google this error and figure it out.
+      # Maybe this...
+      return
+
+    if output.match 'Error: jtag status contains invalid mode value - communication failure'
+      onError 'Device might be bricked. Use ST-Link Utility to erase chip flash.'
+
+    if output.match 'Error: reset device failed'  
+      console.log "Ignore this error if you used vjpr's patch for openocd 0.9.0 has been patched to automatically retry.".green
+
+    if output.match 'Info : STM32F411CEU6.cpu'
+      #growl 'Ready', title: 'OpenOCD Helper'
+      console.log '=============================='.green
+      console.log '            READY             '.green
+      console.log '=============================='.green
+
+  handleExit = (output) ->
+     # Openocd shutdown.
+
+    if allOutput.match 'Error: open failed'
       # Device is probably disconnected. 
       debug 'Device is probably disconnected. Will try to connect when device is detected again.'.red
+      proc.kill 'SIGINT'
       pubsub.once 'stLinkConnected', -> run()
       return
 
-    if output.match 'Error: read version failed'
+    if allOutput.match 'Error: read version failed'
       debug 'OpenOCD needs to restart'.red
+      proc.kill 'SIGINT'
       run()
       return
       # Try to rerun after a second.
@@ -70,13 +114,13 @@ run = ->
       #  run()
       #, 1000
 
-    if output.match 'undefined debug reason 7 - target needs reset'
-      debug '-> undefined debug reason 7 - target needs reset'.red
-      debug 'WHAT THE FUCK. Need to start debug session again.'.red
-      # TODO: Google this error and figure it out.
-      # Maybe this...
-      return
-
+  proc.stderr.setEncoding 'utf8'
+  proc.stdout.setEncoding 'utf8'
+  # NOTE: Output from openocd reported on stderr.
+  proc.stderr.on 'data', handleOutput
+  proc.stdout.on 'data', handleOutput
+  proc.on 'exit', handleExit
+   
 run()
 
 
@@ -97,8 +141,7 @@ objcopyCmd = "#{objcopy} -O ihex #{elf} #{out}"
 cmdsString = """
   reset halt
   flash probe 0
-  #{#flash protect 0 0 0 off}
-  #{#stm32f2x unlock 0}
+  #{#flash protect 0 0 0 off #stm32f2x unlock 0}
   flash write_image erase #{elf}
   reset
   exit
@@ -133,9 +176,9 @@ flashOnChange = ->
       shellPrompt: '> '
     conn.on 'ready', ->
       for cmd in cmds
-        debug cmd
+        telnetDebug '->', cmd
         await conn.exec cmd, defer resp
-        debug resp
+        telnetDebug '<-', resp
     conn.on 'exit', ->
       debug 'Telnet exited'
     conn.connect params
@@ -162,4 +205,4 @@ flashOnChange = ->
   # TODO: Retry if `Error: read version failed`.
   #   Should probably fix in openocd instead.
 
-flashOnChange()
+#flashOnChange()
